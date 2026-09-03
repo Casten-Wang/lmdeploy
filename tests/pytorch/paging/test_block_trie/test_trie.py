@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from lmdeploy.pytorch import messages as messages_module
-from lmdeploy.pytorch.messages import SamplingParam, UpdateTokenMode
+from lmdeploy.pytorch.messages import InputEmbeddings, SamplingParam, UpdateTokenMode
 from lmdeploy.pytorch.paging import Scheduler
 from lmdeploy.vl.constants import Modality
 
@@ -609,6 +609,50 @@ class TestBlockTrie(BlockTrieTestMixin):
         node = seq.prefix_cache.trie_cursor
         assert node is not None
         assert node.prefix_len == block_size
+
+    def test_match_input_embeddings_uses_content_identity(self, block_trie, block_mgr, scheduler):
+        sess = scheduler.add_session(0)
+        block_size = sess.seq_meta.block_size
+        token_ids = [1] * block_size + [99] * block_size + [2] * block_size + [3]
+
+        def make_embeddings(value):
+            data = np.full((block_size, 4), value, dtype=np.float32)
+            return [InputEmbeddings(data, block_size, block_size * 2)]
+
+        seq = sess.add_sequence(token_ids, input_embeddings=make_embeddings(1.0))
+        block_mgr.allocate(seq)
+        block_trie.allocate(seq)
+
+        same = sess.add_sequence(token_ids, input_embeddings=make_embeddings(1.0))
+        block_trie.match(same)
+        assert same.num_history_ids == block_size * 3
+
+        different = sess.add_sequence(token_ids, input_embeddings=make_embeddings(2.0))
+        block_trie.match(different)
+        assert different.num_history_ids == block_size
+
+        text_only = sess.add_sequence(token_ids)
+        block_trie.match(text_only)
+        assert text_only.num_history_ids == block_size
+
+    def test_input_embeddings_skip_hash_when_prefix_cache_disabled(self, cache_config, scheduler_config, seq_meta,
+                                                                   monkeypatch):
+        cache_config.enable_prefix_caching = False
+        scheduler = Scheduler(scheduler_config=scheduler_config, cache_config=cache_config, seq_meta=seq_meta)
+
+        def _fail_hash(*args, **kwargs):
+            raise AssertionError('disabled prefix cache should not hash embeddings')
+
+        monkeypatch.setattr(messages_module, 'make_multimodal_content_hash', _fail_hash)
+        sess = scheduler.add_session(0)
+        data = np.ones((sess.seq_meta.block_size, 4), dtype=np.float32)
+        seq = sess.add_sequence(
+            [99] * sess.seq_meta.block_size,
+            input_embeddings=[InputEmbeddings(data, 0, sess.seq_meta.block_size)],
+        )
+
+        assert seq.prefix_cache.multimodal_spans == []
+        assert len(seq.history_embeddings) == 1
 
     def test_match_multimodal_uses_precomputed_content_hash(self, block_trie, block_mgr, scheduler):
         sess = scheduler.add_session(0)

@@ -976,6 +976,14 @@ class SchedulerSequence:
             self._num_images = 0
             return
         new_embeddings = [emb.move_position(self._num_history_ids) for emb in embeddings]
+        if self.session.scheduler.cache_config.enable_prefix_caching:
+            for embedding in new_embeddings:
+                content_hash = make_multimodal_content_hash(embedding.embeddings, None)
+                self.prefix_cache.multimodal_spans.append(
+                    MultimodalSpan(start=embedding.start,
+                                   end=embedding.end,
+                                   modality='input_embeddings',
+                                   content_hash=content_hash))
         self._num_images = len(new_embeddings)
         self.history_embeddings.append(new_embeddings)
 
