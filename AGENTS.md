@@ -33,12 +33,15 @@ Run the cold/warm/cold GPU experiment documented in
 
 ## Success criteria
 
-The run passes only when all three conditions are true:
+The run passes only when all six conditions are true:
 
-1. the two different embedding payloads produce observably different cold
+1. the first run reports zero cached tokens;
+2. the third run reports zero cached tokens after explicit trie eviction;
+3. all three runs generate at least one token;
+4. the two different embedding payloads produce observably different cold
    outputs;
-2. the warm output for the second payload equals its cold output;
-3. the second request reuses only the complete token block before the changed
+5. the warm output for the second payload equals its cold output;
+6. the second request reuses only the complete token block before the changed
    embedding span, rather than blocks whose KV depends on that span.
 
 Do not claim a performance improvement. This experiment validates correctness,

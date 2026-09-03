@@ -13,8 +13,9 @@ The validation performs three deterministic greedy runs:
 2. different payload E2 while E1's prefix is cached;
 3. E2 again after evicting trie-owned KV blocks.
 
-The fixed run must make run 2 identical to run 3 and must stop its prefix hit at
-the complete block before the changed embedding span.
+The harness also proves that runs 1 and 3 are actually cold, that every run
+generates tokens, that run 2 is identical to run 3, and that run 2 stops its
+prefix hit at the complete block before the changed embedding span.
 
 ## Exact branch and commits
 
@@ -78,6 +79,9 @@ The command exits with status zero and the JSON ends with:
 ```json
 {
   "checks": {
+    "first_run_is_cold": true,
+    "third_run_is_cold_after_eviction": true,
+    "all_runs_generated_tokens": true,
     "embedding_changes_output": true,
     "warm_matches_cold_for_e2": true,
     "different_embedding_stops_before_span": true
@@ -88,6 +92,8 @@ The command exits with status zero and the JSON ends with:
 
 The exact generated token IDs may differ across GPU architectures or software
 versions. Equality is evaluated only within the same process and environment.
+The JSON also records every visible GPU, the NVIDIA driver, CUDA and PyTorch
+versions, the branch and commit, and whether the checkout was dirty.
 
 ## Return these artifacts
 

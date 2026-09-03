@@ -31,12 +31,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def git_revision() -> str | None:
+def git_output(*args: str) -> str | None:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
+        return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).strip()
     except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def nvidia_driver_version() -> str | None:
+    try:
+        return (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=driver_version",
+                    "--format=csv,noheader",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            .splitlines()[0]
+            .strip()
+        )
+    except (OSError, subprocess.CalledProcessError, IndexError):
         return None
 
 
@@ -46,9 +63,7 @@ def run_with_embeddings(instance, session_id, token_ids, embedding, start, end, 
     def send_async(request_type, data):
         if request_type is RequestType.ADD_MESSAGE:
             data = dict(data)
-            data["input_embeddings"] = [
-                InputEmbeddings(embedding.copy(), start, end)
-            ]
+            data["input_embeddings"] = [InputEmbeddings(embedding.copy(), start, end)]
         return original_send_async(request_type, data)
 
     instance.req_sender.send_async = send_async
@@ -85,9 +100,7 @@ def main() -> None:
     engine.start()
     instance = engine.create_instance()
     try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.model, revision=args.revision, trust_remote_code=False
-        )
+        tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.revision, trust_remote_code=False)
         encoded = tokenizer.encode(" cache identity", add_special_tokens=False)
         token_id = encoded[0] if encoded else (tokenizer.bos_token_id or 1)
         block_size = engine.cache_config.block_size
@@ -133,15 +146,20 @@ def main() -> None:
     finally:
         engine.close()
 
+    git_status = git_output("status", "--porcelain")
     result = {
         "environment": {
             "platform": platform.platform(),
             "python": platform.python_version(),
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
-            "gpu": torch.cuda.get_device_name(0),
+            "gpu_count": torch.cuda.device_count(),
+            "gpus": [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())],
+            "nvidia_driver": nvidia_driver_version(),
             "lmdeploy": getattr(lmdeploy, "__version__", None),
-            "git_revision": git_revision(),
+            "git_revision": git_output("rev-parse", "HEAD"),
+            "git_branch": git_output("branch", "--show-current"),
+            "git_dirty": None if git_status is None else bool(git_status),
             "model": args.model,
             "model_revision": args.revision,
         },
@@ -160,6 +178,9 @@ def main() -> None:
             "evicted_blocks": evicted_blocks,
         },
         "checks": {
+            "first_run_is_cold": first_hit == 0,
+            "third_run_is_cold_after_eviction": cold_hit == 0,
+            "all_runs_generated_tokens": all((first_tokens, warm_tokens, cold_tokens)),
             "embedding_changes_output": first_tokens != cold_tokens,
             "warm_matches_cold_for_e2": warm_tokens == cold_tokens,
             "different_embedding_stops_before_span": warm_hit == block_size,
